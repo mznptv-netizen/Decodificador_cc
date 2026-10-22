@@ -28,7 +28,7 @@ jobs:
 
     - name: Compilar ejecutable con PyInstaller
       run: |
-        pyinstaller --onefile main.py
+        pyinstaller --noconsole --onefile main.py
 
     - name: Subir ejecutable como artifact
       uses: actions/upload-artifact@v4
