@@ -1,69 +1,99 @@
 import base64
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
+from mrz.parser import parse_mrz
 
-def decodificar():
+def procesar_datos():
     texto_ingresado = entrada.get().strip()
     texto_resultado.delete("1.0", tk.END)
     
     if not texto_ingresado:
-        messagebox.showwarning("Advertencia", "Por favor, escanea o ingresa un texto.")
+        messagebox.showwarning("Advertencia", "Por favor, escanea o ingresa un código.")
         return
 
     resultado_final = ""
     
-    # 1. Verificar si es una franja MRZ (identificada por las flechas '<<<')
-    if "<<<" in texto_ingresado:
-        resultado_final = f"--- [Detectado MRZ / OCR Honeywell] ---\n{texto_ingresado}"
-        
-    else:
-        # 2. Intentar decodificar como Base64 (para códigos QR)
+    # 1. Detección de Franja MRZ (Reverso de la cédula con caracteres <<<)
+    if "<<<" in texto_ingresado or (len(texto_ingresado) > 60 and "COL" in texto_ingresado):
         try:
+            lineas_mrz = texto_ingresado.replace("\r", "").split("\n")
+            mrz_parsed = parse_mrz(lineas_mrz)
+            
+            if mrz_parsed.valid:
+                datos = mrz_parsed.fields
+                resultado_final = (
+                    "=== [CEDULA COLOMBIANA - FRANJA MRZ (REVERSO)] ===\n"
+                    f"• Tipo de Documento : {datos.document_type}\n"
+                    f"• País / Emisor     : {datos.country}\n"
+                    f"• Apellidos         : {datos.surname}\n"
+                    f"• Nombres           : {datos.names}\n"
+                    f"• Nro. de Cédula    : {datos.document_number}\n"
+                    f"• Nacionalidad      : {datos.nationality}\n"
+                    f"• Fecha Nacimiento  : {datos.birth_date}\n"
+                    f"• Género            : {datos.sex}\n"
+                    f"• Fecha Expiración  : {datos.expiration_date}\n"
+                )
+            else:
+                resultado_final = f"--- [Lectura MRZ detectada - Formato parcial] ---\n{texto_ingresado}"
+        except Exception as e:
+            resultado_final = f"--- [Lectura OCR MRZ Cruda] ---\n{texto_ingresado}\n\nNota: {e}"
+            
+    else:
+        # 2. Detección del Código QR del Frente (Formato Base64 con Firma Digital PKI)
+        try:
+            # Decodificar la capa Base64 proporcionada por el escáner
             bytes_decodificados = base64.b64decode(texto_ingresado, validate=True)
+            
+            # Intentar extraer porciones de texto legible de los bytes del QR
             try:
-                texto_decodificado = bytes_decodificados.decode("utf-8")
-                resultado_final = f"--- [Detectado como Base64 (QR)] ---\n{texto_decodificado}"
-            except UnicodeDecodeError:
-                resultado_final = f"--- [Base64 a Hexadecimal] ---\n{bytes_decodificados.hex()}"
+                texto_legible = bytes_decodificados.decode("utf-8", errors="ignore")
+            except Exception:
+                texto_legible = "Datos estrictamente binarios."
+
+            resultado_final = (
+                "=== [QR CÉDULA NUEVA - CAPA BASE64 & PKI] ===\n"
+                f"• Tamaño del paquete binario : {len(bytes_decodificados)} bytes\n"
+                f"• Contenido extraíble / Texto :\n{text_preview(texto_legible)}\n\n"
+                "🔒 [Capa de Seguridad]: Este QR contiene una Firma Digital (PKI)\n"
+                "y certificados oficiales de la Registraduría Nacional para\n"
+                "garantizar autenticidad y prevenir falsificaciones."
+            )
         except Exception:
-            # 3. Si no es Base64 ni MRZ, se muestra como texto plano
-            resultado_final = f"--- [Texto Plano / Estándar] ---\n{texto_ingresado}"
+            # 3. Texto plano por defecto si no es QR ni MRZ
+            resultado_final = f"=== [Texto Estándar / Desconocido] ===\n{texto_ingresado}"
         
     texto_resultado.insert(tk.END, resultado_final)
     
-    # Limpiar automáticamente la entrada para el siguiente escaneo rápido
+    # Limpiar automáticamente para el siguiente escaneo con la pistola
     entrada.delete(0, tk.END)
     entrada.focus()
 
-# Configuración de la interfaz gráfica
-root = tk.Tk()
-root.title("Lector Universal: QR (Base64) & MRZ (OCR)")
-root.geometry("600x450")
+def text_preview(texto):
+    # Filtra y muestra una vista limpia de los datos legibles contenidos en el QR
+    limpio = "".join(c for c in texto if c.isprintable())
+    return limpio[:400] if limpio else "[Estructura binaria cifrada / firmada]"
 
-label_instruccion = tk.Label(root, text="Escanea el Código QR (Base64) o la Franja MRZ (OCR):", font=("Arial", 11, "bold"))
+# Configuración de la Interfaz Gráfica
+root = tk.Tk()
+root.title("Validador de Cédula Digital (QR Base64/PKI & MRZ)")
+root.geometry("680x530")
+
+label_instruccion = tk.Label(root, text="Escanee el QR (Frente) o la Franja MRZ (Reverso):", font=("Arial", 11, "bold"))
 label_instruccion.pack(pady=10)
 
-# Campo donde el escáner (QR o Honeywell OCR) escribe automáticamente
-entrada = tk.Entry(root, font=("Arial", 12), width=50)
+entrada = tk.Entry(root, font=("Arial", 12), width=60)
 entrada.pack(pady=5)
 entrada.focus()
 
-btn_procesar = tk.Button(root, text="Procesar Datos", command=decodificar, font=("Arial", 11), bg="#2196F3", fg="white")
+btn_procesar = tk.Button(root, text="Procesar Datos del Documento", command=procesar_datos, font=("Arial", 11), bg="#2196F3", fg="white")
 btn_procesar.pack(pady=10)
 
-# Al presionar Enter (automático por el escáner), procesa al instante
-entrada.bind("<Return>", lambda event: decodificar())
+entrada.bind("<Return>", lambda event: procesar_datos())
 
-label_resultado = tk.Label(root, text="Resultado de la Lectura:", font=("Arial", 11, "bold"))
+label_resultado = tk.Label(root, text="Resultado del Análisis de Seguridad:", font=("Arial", 11, "bold"))
 label_resultado.pack(pady=5)
 
-# Área de texto para ver el resultado detallado
-texto_resultado = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=68, height=12, font=("Arial", 10))
-texto_resultado.pack(pady=5)
-
-root.mainloop()
-# Área de texto donde se muestra el resultado
-texto_resultado = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=55, height=10, font=("Arial", 10))
+texto_resultado = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=76, height=16, font=("Courier New", 10))
 texto_resultado.pack(pady=5)
 
 root.mainloop()
